@@ -1,0 +1,93 @@
+# src/omie_remessas/main.py
+
+from fastapi import FastAPI, UploadFile, File, HTTPException
+import pandas as pd
+import datetime
+import json
+from .functions import incluir_remessa_omie, load_and_display_excel_from_request
+from .dictionary import remessa_data
+
+app = FastAPI()
+
+YOUR_APP_KEY = "923104076895"
+YOUR_APP_SECRET = "caa5a11cfcf2881b1c55f90bedcaddcf"
+
+
+@app.post("/processar_excel/")
+async def processar_excel(file: UploadFile = File(...)):
+    # Carrega o arquivo Excel vindo do n8n via UploadFile do FastAPI
+    try:
+        data_table = load_and_display_excel_from_request(file)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erro ao ler o Excel: {e}")
+
+    dados_remessas = []
+    dados_erros = []
+
+    # Busca o nome correto da coluna Cartão SUS
+    sus_col = [c for c in data_table.columns if c.strip().lower().replace(' ', '') == 'cartãosus']
+    sus_col = sus_col[0] if sus_col else None
+
+    if not sus_col:
+        return {"status": "Erro", "detalhe": "Coluna 'Cartão SUS' não encontrada no Excel."}
+
+    for row_index in data_table.index:
+        add_information_text = data_table.loc[row_index, 'DESCRIÇÃO NF COMPLETA']
+
+        if pd.isna(add_information_text) or str(add_information_text).strip() == "":
+            dados_erros.append({
+                "tipo_erro": "AddInfo_vazio",
+                "linha": row_index + 2,
+                "cartao_sus": data_table.loc[row_index, sus_col],
+            })
+            continue  # Pula para a próxima linha
+
+        # Gera código único para remessa
+        remessa_data["cCodIntRem"] = f"REM-{datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        remessa_data["infAdic_data"]["cDadosAdic"] = add_information_text
+        remessa_data["dPrevisao"] = datetime.datetime.now().strftime('%d/%m/%Y')
+
+        resultado = incluir_remessa_omie(
+            app_key=YOUR_APP_KEY,
+            app_secret=YOUR_APP_SECRET,
+            **remessa_data
+        )
+
+        nCodRem_resposta = resultado.get("nCodRem", None)
+        nRem_omie_resposta = resultado.get("cNumeroRemessa", None)
+
+        if resultado and resultado.get("cDesStatus") == "Remessa de Produto cadastrada com sucesso!":
+            dados_remessas.append({
+                "cCodIntRem": remessa_data["cCodIntRem"],
+                "descricao_nf": add_information_text,
+                "nCodRem": nCodRem_resposta,
+                "cNumeroRemessa": nRem_omie_resposta,
+                "status": resultado.get("cDesStatus", None)
+            })
+        else:
+            dados_erros.append({
+                "tipo_erro": "Status_NF",
+                "linha": row_index + 2,
+                "cartao_sus": data_table.loc[row_index, sus_col],
+                "status": resultado.get("cDesStatus", ""),
+                "mensagem": resultado.get("error", "")
+            })
+
+    # Converte em DataFrame e salva arquivos, se necessário
+    df_remessas = pd.DataFrame(dados_remessas)
+    df_erros = pd.DataFrame(dados_erros)
+    lista_logs = []
+
+    if not df_remessas.empty:
+        df_remessas.to_excel('remessas_processadas.xlsx', index=False)
+        lista_logs.append('Arquivo "remessas_processadas.xlsx" gerado.')
+    if not df_erros.empty:
+        df_erros.to_excel('remessas_com_erro.xlsx', index=False)
+        lista_logs.append('Arquivo "remessas_com_erro.xlsx" gerado.')
+
+    return {
+        "status": "Sucesso",
+        "remessas_sucesso": dados_remessas,
+        "erros": dados_erros,
+        "logs": lista_logs
+    }
