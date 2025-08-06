@@ -5,3 +5,16 @@ __pycache__/
 .env
 *.db
 resultado_planilhas.zip
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# IDE (PyCharm)
+.idea/
+*.iml
+
+# Docker
+.dockerignore
