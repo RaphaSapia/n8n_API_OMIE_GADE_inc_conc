@@ -1,5 +1,6 @@
 # Use uma imagem base oficial do Python
-FROM python:3.9-slim-bullseye
+# MUDANÇA AQUI: de 3.9 para 3.11 para compatibilidade com numpy==2.3.2
+FROM python:3.11-slim-bullseye
 
 # Define o ambiente como não-interativo para evitar prompts durante apt-get
 ENV DEBIAN_FRONTEND=noninteractive
