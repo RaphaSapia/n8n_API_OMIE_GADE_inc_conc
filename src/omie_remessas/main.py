@@ -1,21 +1,18 @@
+from src.omie_remessas.functions import incluir_remessa_omie, load_and_display_excel_from_request
+from src.omie_remessas.dictionary import remessa_data
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from .functions import incluir_remessa_omie, load_and_display_excel_from_request
-from .dictionary import remessa_data
+from fastapi.responses import StreamingResponse
 import io
 import pandas as pd
 import zipfile
 import datetime
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse
-
+import os  # <--- para leitura da porta via variável de ambiente
 
 app = FastAPI()
 
 YOUR_APP_KEY = "923104076895"
 YOUR_APP_SECRET = "caa5a11cfcf2881b1c55f90bedcaddcf"
-
-
 
 @app.post("/processar_excel/")
 async def processar_excel(file: UploadFile = File(...)):
@@ -105,3 +102,9 @@ async def processar_excel(file: UploadFile = File(...)):
             "Content-Disposition": 'attachment; filename="resultado_planilhas.zip"'
         }
     )
+
+# --- Bloco para rodar o app com porta configurável ---
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))  # Usa a variável de ambiente PORT, ou padrão 8000
+    uvicorn.run("src.omie_remessas.main:app", host="0.0.0.0", port=port, reload=True)

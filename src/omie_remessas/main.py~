@@ -1,11 +1,15 @@
-# src/omie_remessas/main.py
+from src.omie_remessas.functions import incluir_remessa_omie, load_and_display_excel_from_request
+from src.omie_remessas.dictionary import remessa_data
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
+import io
 import pandas as pd
+import zipfile
 import datetime
-import json
-from .functions import incluir_remessa_omie, load_and_display_excel_from_request
-from .dictionary import remessa_data
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
+
+
 
 app = FastAPI()
 
@@ -13,9 +17,9 @@ YOUR_APP_KEY = "923104076895"
 YOUR_APP_SECRET = "caa5a11cfcf2881b1c55f90bedcaddcf"
 
 
+
 @app.post("/processar_excel/")
 async def processar_excel(file: UploadFile = File(...)):
-    # Carrega o arquivo Excel vindo do n8n via UploadFile do FastAPI
     try:
         data_table = load_and_display_excel_from_request(file)
     except Exception as e:
@@ -24,7 +28,6 @@ async def processar_excel(file: UploadFile = File(...)):
     dados_remessas = []
     dados_erros = []
 
-    # Busca o nome correto da coluna Cartão SUS
     sus_col = [c for c in data_table.columns if c.strip().lower().replace(' ', '') == 'cartãosus']
     sus_col = sus_col[0] if sus_col else None
 
@@ -40,9 +43,8 @@ async def processar_excel(file: UploadFile = File(...)):
                 "linha": row_index + 2,
                 "cartao_sus": data_table.loc[row_index, sus_col],
             })
-            continue  # Pula para a próxima linha
+            continue
 
-        # Gera código único para remessa
         remessa_data["cCodIntRem"] = f"REM-{datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')}"
         remessa_data["infAdic_data"]["cDadosAdic"] = add_information_text
         remessa_data["dPrevisao"] = datetime.datetime.now().strftime('%d/%m/%Y')
@@ -73,21 +75,34 @@ async def processar_excel(file: UploadFile = File(...)):
                 "mensagem": resultado.get("error", "")
             })
 
-    # Converte em DataFrame e salva arquivos, se necessário
+    # SEMPRE cria os DataFrames para poder gerar os arquivos, mesmo vazios.
     df_remessas = pd.DataFrame(dados_remessas)
     df_erros = pd.DataFrame(dados_erros)
-    lista_logs = []
 
-    if not df_remessas.empty:
-        df_remessas.to_excel('remessas_processadas.xlsx', index=False)
-        lista_logs.append('Arquivo "remessas_processadas.xlsx" gerado.')
-    if not df_erros.empty:
-        df_erros.to_excel('remessas_com_erro.xlsx', index=False)
-        lista_logs.append('Arquivo "remessas_com_erro.xlsx" gerado.')
+    # Gera arquivos Excel em memória
+    remessas_buffer = io.BytesIO()
+    erros_buffer = io.BytesIO()
 
-    return {
-        "status": "Sucesso",
-        "remessas_sucesso": dados_remessas,
-        "erros": dados_erros,
-        "logs": lista_logs
-    }
+    with pd.ExcelWriter(remessas_buffer, engine='xlsxwriter') as writer:
+        df_remessas.to_excel(writer, index=False)
+    remessas_buffer.seek(0)
+
+    with pd.ExcelWriter(erros_buffer, engine='xlsxwriter') as writer:
+        df_erros.to_excel(writer, index=False)
+    erros_buffer.seek(0)
+
+    # Cria ZIP em memória
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+        zip_file.writestr("remessas_processadas.xlsx", remessas_buffer.read())
+        zip_file.writestr("remessas_com_erro.xlsx", erros_buffer.read())
+    zip_buffer.seek(0)
+
+    # Responde o ZIP ao n8n
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/x-zip-compressed",
+        headers={
+            "Content-Disposition": 'attachment; filename="resultado_planilhas.zip"'
+        }
+    )
